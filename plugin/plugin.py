@@ -1,6 +1,6 @@
 import ast
 from pathlib import Path
-from typing import Any, Dict, Generator
+from typing import Any, Dict, Generator, Optional, Set
 
 from plugin.serverless_parser import get_all_http_methods, get_serverless_file_path, read_serverless_yml
 from plugin.visitor import Visitor
@@ -11,7 +11,7 @@ class Plugin:
         self._tree = tree
         self._filename = filename
 
-        self._http_methods = None
+        self._http_methods: Optional[Set[str]] = None
 
     @property
     def serverless_content(self) -> Dict[str, Any]:
@@ -20,7 +20,7 @@ class Plugin:
             raise Exception("serverless.yml not found")
         return read_serverless_yml(serverless_file_path)
 
-    def get_http_methods(self) -> set[str]:
+    def get_http_methods(self) -> Set[str]:
         if self._http_methods is None:
             self._http_methods = get_all_http_methods(self.serverless_content)
         return self._http_methods
@@ -39,11 +39,14 @@ class Plugin:
 
     def _get_function_name(self, func_name: str) -> str:
         functions_base_path = self.serverless_content.get("custom", {}).get("functionsBasePath")
-        absolute_function_base_path = get_serverless_file_path().parent / functions_base_path
+        serverless_file_path = get_serverless_file_path()
+        if serverless_file_path is None:
+            raise RuntimeError("serverless.yml not found")
+        absolute_function_base_path = serverless_file_path.parent / functions_base_path
         absolute_file_name = Path(self._filename).absolute()
         relative_file_name = absolute_file_name.relative_to(absolute_function_base_path)
         return f"{relative_file_name.stem}.{func_name}"
 
-    def _is_http_function(self, func_name: str):
+    def _is_http_function(self, func_name: str) -> bool:
         dotted_func_name = self._get_function_name(func_name)
         return dotted_func_name in self.get_http_methods()

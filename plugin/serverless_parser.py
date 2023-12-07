@@ -1,7 +1,7 @@
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import yaml
 
@@ -12,7 +12,7 @@ def read_serverless_yml(path: Path) -> Dict[str, Any]:
 
 
 @lru_cache()
-def get_serverless_file_path() -> Path:
+def get_serverless_file_path() -> Optional[Path]:
     current_dir = Path(os.getcwd())
     while current_dir != current_dir.parent:
         if (current_dir / "serverless.yml").exists():
@@ -20,6 +20,7 @@ def get_serverless_file_path() -> Path:
         if (current_dir / "serverless.yaml").exists():
             return current_dir / "serverless.yaml"
         current_dir = current_dir.parent
+    return None
 
 
 def get_all_http_methods(serverless_content: Dict[str, Any]) -> set[str]:

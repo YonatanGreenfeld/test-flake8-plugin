@@ -1,4 +1,5 @@
 import ast
+from typing import Set, Tuple
 
 FULLY_QUALIFIED_NAMES = (
     "jit_utils.lambda_decorators.require_permissions",
@@ -8,12 +9,12 @@ FULLY_QUALIFIED_NAMES = (
 
 
 class Visitor(ast.NodeVisitor):
-    def __init__(self):
-        self._valid_names = set()
-        self._missing_decorators = set()
+    def __init__(self) -> None:
+        self._valid_names: Set[str] = set()
+        self._missing_decorators: Set[Tuple[str, int, int]] = set()
 
     @property
-    def missing_decorators(self) -> set:
+    def missing_decorators(self) -> Set[Tuple[str, int, int]]:
         return self._missing_decorators
 
     def visit_Import(self, node: ast.Import) -> None:
@@ -36,7 +37,7 @@ class Visitor(ast.NodeVisitor):
         )
 
     @staticmethod
-    def get_full_decorator_name(node):
+    def get_full_decorator_name(node: ast.expr) -> str:
         if isinstance(node, ast.Name):
             return node.id
         elif isinstance(node, ast.Attribute):
