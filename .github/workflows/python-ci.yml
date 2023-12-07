@@ -31,4 +31,6 @@ jobs:
       run: mypy plugin
 
     - name: Run Pytest
-      run: pytest tests
+      run: |
+        pip install .
+        pytest tests
