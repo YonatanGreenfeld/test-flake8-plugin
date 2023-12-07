@@ -1,6 +1,6 @@
 import ast
 from pathlib import Path
-from typing import Any, Dict, Generator, Optional, Set
+from typing import Any, Dict, Generator, Optional, Set, Tuple, Type
 
 from plugin.serverless_parser import get_all_http_methods, get_serverless_file_path, read_serverless_yml
 from plugin.visitor import Visitor
@@ -25,7 +25,7 @@ class Plugin:
             self._http_methods = get_all_http_methods(self.serverless_content)
         return self._http_methods
 
-    def run(self) -> Generator[tuple[int, int, str, type[Any]], None, None]:
+    def run(self) -> Generator[Tuple[int, int, str, Type[Any]], None, None]:
         visitor = Visitor()
         visitor.visit(self._tree)
         for func_name, lineno, col_offset in visitor.missing_decorators:

@@ -1,7 +1,7 @@
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Set
 
 import yaml
 
@@ -23,7 +23,7 @@ def get_serverless_file_path() -> Optional[Path]:
     return None
 
 
-def get_all_http_methods(serverless_content: Dict[str, Any]) -> set[str]:
+def get_all_http_methods(serverless_content: Dict[str, Any]) -> Set[str]:
     http_methods = set()
     for func in serverless_content.get("functions", {}).values():
         for event in func.get("events", []):
