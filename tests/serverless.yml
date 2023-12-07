@@ -1,0 +1,448 @@
+service: authentication-service
+
+frameworkVersion: "3"
+
+package:
+  exclude:
+    - './**'
+  include:
+    - 'src/**'
+
+provider:
+  tags:
+    lumigo:auto-trace: true
+    environment: ${env:ENV_NAME, self:provider.stage}
+    LUMIGO_TAG: ${self:service}
+  name: aws
+  deploymentBucket:
+    blockPublicAccess: true
+    serverSideEncryption: AES256
+  timeout: 30
+  stage: ${opt:stage,'local'}
+  runtime: python3.8
+  region: us-east-1
+  apiGateway:
+    shouldStartNameWithService: true
+  eventBridge:
+    useCloudFormation: true
+  lambdaHashingVersion: 20201221
+  environment:
+    API_HOST: ${self:custom.api_host}
+    ENV_NAME: ${env:ENV_NAME, self:provider.stage}
+    DEPLOYMENT_STAGE: ${self:provider.stage}
+    testHost: http://localhost
+    SERVICE_NAME: ${self:service}
+    JIT_JWT_ALGORITHM: RS256
+    FRONTEGG_JWT_ALGORITHM: RS256
+    AWS_REGION_NAME: us-east-1
+    FRONTEGG_PUBLIC_KEY: ${ssm:/${self:custom.env_name}/infra/frontegg/jwt-public-key, 'jwt-publickey'}
+    FRONTEGG_JWT_AUDIENCE: ${ssm:/${self:custom.env_name}/infra/frontegg/client-id, 'jwt-aud'}
+    JIT_AUTH_PUBLIC_KEY: ${ssm:/${self:custom.env_name}/infra/jit-auth/jit-auth-public-key, 'jit-publickey'}
+    JIT_AUTH_PRIVATE_KEY_ID: jit-auth-private-key-${self:custom.env_name}
+    LAUNCH_DARKLY_SDK_KEY: ${ssm:/${self:custom.env_name}/infra/launch-darkly/sdk-key, true} #true is used for a Secure String SSM Parameter
+    LOG_LEVEL: ${opt:log-level, 'INFO'}
+    AWS_ACCOUNT_ID: "${aws:accountId}"
+    JIT_INTERNAL_TOKEN_DESCRIPTION: ${self:custom.JIT_INTERNAL_TOKEN_DESCRIPTION}
+
+  iamRoleStatements:
+    # This IAM-role (used by the warmup lambda) must be a global role, because the warmup lambda is being created automatically
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource:
+        - arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-${opt:stage}-generate-internal-api-token
+        - arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-${opt:stage}-jit-api-auth
+        - arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-${opt:stage}-authenticate-client-credentials
+        - arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-${opt:stage}-get-registry-login-password
+
+plugins: ${self:custom.plugins.${self:provider.stage}, self:custom.plugins.default}
+
+custom:
+  env_name: ${env:ENV_NAME, self:provider.stage}
+  api_host: ${ssm:/${self:custom.env_name}/infra/api/host, 'api.local.jitdev.io'}
+  JIT_INTERNAL_TOKEN_DESCRIPTION: "Jit Internal Token"
+  app_name:
+    prod: app-${self:provider.stage}
+    staging: app-${self:provider.stage}
+    dev: app-${self:provider.stage}
+    custom_env: app-${self:custom.env_name}-${self:provider.stage}
+  basePath: authentication
+  documentation:
+    version: "1"
+    title: "Authentication Service"
+    description: "API for the authentication service"
+    termsOfService: https://www.jit.io/legal/terms
+    x-base-path: ${self:custom.basePath}
+    tags:
+      - name: Authentication
+        description: The authentication endpoint is designed to validate the clientId and secret provided by the user.
+                     Upon successful validation, it generates and returns a JWT (JSON Web Token) which can be used for
+                     subsequent API requests to authorize and identify the caller.
+        externalDocumentation:
+          url: https://docs.jit.io/docs/managing-users#generating-api-tokens
+          description: Learn about obtaining API keys
+    servers:
+      url: https://${self:custom.api_host}/{basePath}
+      description: "The authentication service API server"
+      variables:
+        basePath:
+          default: ${self:custom.basePath}
+    securitySchemes:
+      bearerAuth:
+        type: http
+        scheme: bearer
+        bearerFormat: JWT
+    security:
+      - bearerAuth: [ ]
+  anchors:
+    warmup: &warmup
+      workWeek:
+        enabled:
+          - staging
+          - prod
+      weekEnd:
+        enabled:
+          - staging
+          - pro
+
+    iamRoleStatements:
+      idempotencyTableReadWrite: &idempotencyTableReadWrite
+        Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/IdempotencyTable
+      getFronteggApiKeySSM: &getFronteggApiKeySSM
+        Effect: Allow
+        Action: ssm:GetParameter
+        Resource: arn:aws:ssm:${aws:region}:${aws:accountId}:parameter/frontegg_api_key/*
+      putFronteggApiKeySSM: &putFronteggApiKeySSM
+        Effect: Allow
+        Action: ssm:PutParameter
+        Resource: arn:aws:ssm:${aws:region}:${aws:accountId}:parameter/frontegg_api_key/*
+      kmsPermissions: &kmsPermissions
+        Effect: Allow
+        Action:
+          - KMS:Encrypt
+          - KMS:Decrypt
+          - KMS:ListKeys
+          - KMS:DescribeKey
+        Resource: "*"
+      getFronteggSecrets: &getFronteggSecrets
+        Effect: Allow
+        Action:
+          - secretsmanager:DescribeSecret
+          - secretsmanager:GetSecretValue
+        Resource: arn:aws:secretsmanager:${aws:region}:${aws:accountId}:secret:frontegg-*
+      invokePutSecretApi: &invokePutSecretApi
+        Effect: Allow
+        Action:
+          - execute-api:Invoke
+        Resource: arn:aws:execute-api:${aws:region}:${aws:accountId}:*/${opt:stage}/POST/tenant/*
+      invokeGetSecretApi: &invokeGetSecretApi
+        Effect: Allow
+        Action:
+          - execute-api:Invoke
+        Resource: arn:aws:execute-api:${aws:region}:${aws:accountId}:*/${opt:stage}/GET/tenant/*/*
+      sendMessageToGenerateApiKeysQueue: &sendMessageToGenerateApiKeysQueue
+        Effect: Allow
+        Action:
+          - sqs:GetQueueUrl
+          - sqs:SendMessage
+        Resource: arn:aws:sqs:${aws:region}:${aws:accountId}:GenerateApiKeysQueue
+
+  plugins:
+    local:
+      - serverless-localstack
+      - serverless-functions-base-path
+      - serverless-python-requirements
+      - serverless-manifest-plugin
+      - serverless-dotenv-plugin
+      - serverless-prune-plugin
+      - serverless-openapi-documenter
+    default:
+      - serverless-functions-base-path
+      - serverless-python-requirements
+      - serverless-manifest-plugin
+      - serverless-dotenv-plugin
+      - serverless-domain-manager
+      - serverless-ssm-publish
+      - serverless-plugin-warmup
+      - serverless-iam-roles-per-function
+      - serverless-prune-plugin
+      - serverless-openapi-documenter
+
+  localstack:
+    hostname:
+      local: http://localhost
+      test: ${self:provider.environment.testHost}
+      staging: remote
+    debug: true
+    stages:
+      - local
+      - test
+    host: ${self:custom.localstack.hostname.${self:provider.stage}, ''}
+    endpoints:
+      APIGateway: ${self:custom.localstack.host}:4566
+      S3: ${self:custom.localstack.host}:4566
+      DynamoDB: ${self:custom.localstack.host}:4566
+      CloudFormation: ${self:custom.localstack.host}:4566
+      Lambda: ${self:custom.localstack.host}:4566
+      SSM: ${self:custom.localstack.host}:4566
+  pythonRequirements:
+    fileName: requirements.txt
+    dockerizePip: non-linux
+    dockerSsh: true
+  functionsBasePath: src/handlers
+  prune:
+    automatic: true
+    includeLayers: true
+    number: 3
+  dotenv:
+    path:
+      .env/.${self:provider.stage}
+  warmup:
+    workWeek:
+      enabled: true
+      events:
+        - schedule: cron(*/10 5-19 ? * SUN-FRI *)
+      concurrency: 3
+      prewarm: false
+      cleanFolder: false
+      role: IamRoleLambdaExecution
+    weekEnd:
+      enabled: true
+      events:
+        - schedule: cron(*/30 5-13 ? * SAT *)
+      concurrency: 1
+      prewarm: false
+      cleanFolder: false
+      role: IamRoleLambdaExecution
+  customDomain:
+    type: rest
+    domainName: ${ssm:/${self:custom.env_name}/infra/api/host, 'api.local.jitdev.io'}
+    basePath: ${self:custom.basePath}
+    certificateName: ${ssm:/${self:custom.env_name}/infra/api/host, 'api.local.jitdev.io'}
+    stage: ${self:provider.stage}
+    endpointType: 'edge'
+    securityPolicy: tls_1_2
+    createRoute53Record: true
+  ssmPublish:
+    enabled: true
+    params:
+      - path: /${self:custom.env_name}/service-discovery/${self:service}
+        value: "https://${ssm:/${self:custom.env_name}/infra/api/host, 'api.local.jitdev.io'}/${self:custom.basePath}"
+        secure: false
+      - path: /${self:custom.env_name}/infra/lambda/jwt-authorizer
+        value: arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:${self:service}-${self:provider.stage}-jit-api-auth
+        secure: false
+      - path: /${self:custom.env_name}/infra/lambda/jwt-authorizer-v2
+        value: arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:${self:service}-${self:provider.stage}-jit-api-auth-v2
+        secure: false
+      - path: /${self:custom.env_name}/infra/lambda/jwt-internal-authorizer
+        value: arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:${self:service}-${self:provider.stage}-jit-internal-auth
+        secure: false
+
+
+functions:
+  generate-internal-api-token:
+    handler: generate_internal_api_token.handler
+    memorySize: 512
+    description: Generates an api token for lambda - only for internal usage
+    events:
+      - http:
+          method: post
+          authorizer:
+            arn: ${ssm:/${self:custom.env_name}/infra/lambda/jwt-authorizer, 'default'}
+            type: request
+            resultTtlInSeconds: 0 # if 0 caching is disabled / max value is 3600 for caching results          method: post
+          path: /token/internal
+    iamRoleStatementsName: generate-internal-api-token-role
+    iamRoleStatements:
+      - *idempotencyTableReadWrite
+      - *invokeGetSecretApi
+      - *sendMessageToGenerateApiKeysQueue
+      - *getFronteggSecrets
+    warmup: *warmup
+  generate-tenant-api-keys:
+    handler: generate_tenant_api_keys.handler
+    memorySize: 512
+    description: Generates an api token for lambda
+    events:
+      - sqs:
+          arn: arn:aws:sqs:${aws:region}:${aws:accountId}:GenerateApiKeysQueue
+    iamRoleStatementsName: generate-tenant-api-keys-role
+    iamRoleStatements:
+      - *invokePutSecretApi
+      - *idempotencyTableReadWrite
+      - *getFronteggSecrets
+  handle-tenant-api-keys-deleted:
+    handler: handle_tenant_api_keys_deleted.handler
+    memorySize: 512
+    description: Regenerate tenant api keys if deleted
+    events:
+      - eventBridge:
+          eventBus: ${ssm:/${self:custom.env_name}/infra/event-bus/webhook-dispatcher, 'default'}
+          pattern:
+            source:
+              - "webhook-service"
+            detail-type:
+              - "webhook-call"
+            detail:
+              webhook_body_json:
+                token:
+                  description:
+                    - ${self:custom.JIT_INTERNAL_TOKEN_DESCRIPTION, 'default'}
+              event_type:
+                - "frontegg.tenantApiToken.deleted"
+    iamRoleStatementsName: handle-tenant-api-keys-deleted-role
+    iamRoleStatements:
+      - *invokeGetSecretApi
+      - *sendMessageToGenerateApiKeysQueue
+
+  jit-api-auth:
+    handler: jit_api_auth.handle_jwt_authentication
+    memorySize: 512
+    description: Custom authorizer function for jit APIs
+    warmup: *warmup
+  jit-api-auth-v2:
+    handler: jit_api_auth.handle_jwt_authentication_v2
+    memorySize: 512
+    description: Custom authorizer function for jit APIs
+    warmup: *warmup
+  jit-internal-auth:
+    handler: jit_api_auth.handle_internal_authentication
+    memorySize: 512
+    description: Custom authorizer to verify that the request uses tenant's internal token
+    iamRoleStatementsName: jit-internal-auth-role
+    iamRoleStatements:
+      - *invokeGetSecretApi
+    warmup: *warmup
+  refresh-api-token:
+    handler: refresh_api_token.handler
+    memorySize: 512
+    description: Refresh an access token using an API refresh token
+    events:
+      - http:
+          method: post
+          path: /token/api/refresh
+    iamRoleStatementsName: refresh-api-token-token-role
+    iamRoleStatements:
+      - *getFronteggSecrets
+  authenticate-api-token:
+    handler: authenticate_api_token.handler
+    memorySize: 512
+    description: Authenticate using user API Token
+    events:
+      - http:
+          authorizer:
+            arn: ${ssm:/${self:custom.env_name}/infra/lambda/jwt-authorizer, 'default'}
+            type: request
+            resultTtlInSeconds: 0 # if 0 caching is disabled / max value is 3600 for caching results
+          method: post
+          # TODO: The following path is inaccurately describes what the function does, 'authenticate' is not proper description, when you also require a valid JWT
+          path: /token/api/authenticate
+    iamRoleStatementsName: authenticate-api-token-token-role
+    iamRoleStatements:
+      - *getFronteggSecrets
+  authenticate-client-credentials:
+    handler: authenticate_client_credentials.handler
+    memorySize: 512
+    description: Authenticate using the clientId and a secret credentials provided to the user by Frontegg in the Jit webapp
+    events:
+      - http:
+          method: post
+          path: /login
+    iamRoleStatementsName: authenticate-client-credentials-token-role
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - secretsmanager:DescribeSecret
+          - secretsmanager:GetSecretValue
+        Resource:
+          - arn:aws:secretsmanager:${aws:region}:${aws:accountId}:secret:frontegg-client-id*
+          - arn:aws:secretsmanager:${aws:region}:${aws:accountId}:secret:frontegg-api-key*
+    warmup: *warmup
+  get-registry-login-password:
+    handler: get_registry_login_password.handler
+    memorySize: 512
+    description: Get a password for the registry login operation (docker login)
+    events:
+      - http:
+          path: /registry/login
+          method: post
+          authorizer:
+            arn: ${ssm:/${self:custom.env_name}/infra/lambda/jwt-authorizer, 'default'}
+            type: request
+            resultTtlInSeconds: 0 # if 0 caching is disabled / max value is 3600 for caching results
+    iamRoleStatementsName: get-registry-login-password-role
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - ecr:GetAuthorizationToken
+          - ecr:GetDownloadUrlForLayer
+          - ecr:BatchGetImage
+          - ecr:BatchCheckLayerAvailability
+        Resource:
+          - '*'
+    warmup: *warmup
+
+resources:
+  Resources:
+    # For handling CORS with custom authorizers.
+    # See https://www.serverless.com/blog/cors-api-gateway-survival-guide/#cors-with-custom-authorizers
+    GatewayResponseDefault4XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+
+    GenerateApiKeysQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: GenerateApiKeysQueue
+        VisibilityTimeout: 90
+
+    FronteggEventsRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Description: "Transform Frontegg 'tenant.created' webhook events to SQS message"
+        State: "ENABLED"
+        EventBusName: ${ssm:/${self:custom.env_name}/infra/event-bus/webhook-dispatcher, 'default'}
+        EventPattern:
+          source:
+            - "webhook-service"
+          detail-type:
+            - "webhook-call"
+          detail:
+            event_type:
+              - "frontegg.tenant.created"
+        Targets:
+          - Arn: arn:aws:sqs:${aws:region}:${aws:accountId}:GenerateApiKeysQueue
+            Id: "GenerateApiKeysQueue"
+            InputTransformer:
+              InputPathsMap:
+                tenant_id: "$.detail.webhook_body_json.data.tenantId"
+              InputTemplate: >
+                {
+                  "tenant_id": "<tenant_id>"
+                }
+    # Allow EventBridge to invoke SQS
+    EventBridgeToToSqsPolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: SQS:SendMessage
+            Resource: arn:aws:sqs:${aws:region}:${aws:accountId}:GenerateApiKeysQueue
+        Queues:
+          - Ref: GenerateApiKeysQueue
