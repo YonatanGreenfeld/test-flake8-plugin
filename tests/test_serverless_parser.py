@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from plugin.serverless_parser import get_all_http_methods
+from flake8_require_permissions.serverless_parser import get_all_http_methods
 
 
 @pytest.fixture()

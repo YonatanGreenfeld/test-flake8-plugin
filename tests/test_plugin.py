@@ -4,7 +4,7 @@ import pytest
 import os
 import pathlib
 
-from plugin.plugin import Plugin
+from flake8_require_permissions.plugin import Plugin
 
 
 @pytest.fixture
