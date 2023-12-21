@@ -32,15 +32,11 @@ jobs:
 
     - name: Run Mypy
       if: always()
-      run: mypy flake8_require_permissions
+      run: mypy flake8_require_permissions --junit-xml reports/mypy-junit.xml
 
     - name: Run Pytest
       if: always()
       run: python -m pytest tests --junit-xml=reports/pytest-junit.xml
-
-    - name: Run Pytest2
-      if: always()
-      run: python -m pytest tests --junit-xml=reports/pytest2-junit.xml
 
     - name: Publish Test Report
       uses: dorny/test-reporter@v1
