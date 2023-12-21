@@ -32,15 +32,16 @@ jobs:
 
     - name: Run Mypy
       if: always()
-      run: mypy flake8_require_permissions --junit-xml reports/mypy-junit.xml
+      run: mypy flake8_require_permissions
 
     - name: Run Pytest
       if: always()
       run: python -m pytest tests --junit-xml=reports/pytest-junit.xml
 
     - name: Publish Test Report
-      uses: mikepenz/action-junit-report@v2
-      if: always()
+      uses: dorny/test-reporter@v1
+      if: success() || failure()    # run this step even if previous step failed
       with:
-        report_paths: '**/*-junit.xml'
-        github_token: ${{ secrets.GITHUB_TOKEN }}
+        name: Tests            # Name of the check run which will be created
+        path: reports/*-junit.xml    # Path to test results
+        reporter: java-junit        # Format of test results

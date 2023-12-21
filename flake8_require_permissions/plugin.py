@@ -56,8 +56,3 @@ class Plugin:
         if not dotted_func_name:
             return False
         return dotted_func_name in self.get_http_methods()
-
-
-def foo() -> None:
-    a: int = 2 + "b"
-    return a
