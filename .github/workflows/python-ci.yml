@@ -46,6 +46,6 @@ jobs:
       uses: dorny/test-reporter@v1
       if: success() || failure()    # run this step even if previous step failed
       with:
-        name: Tests            # Name of the check run which will be created
-        path: reports/*-junit.xml    # Path to test results
-        reporter: java-junit        # Format of test results
+        name: "Tests ${{ matrix.python-version }}"
+        path: reports/*-junit.xml
+        reporter: java-junit
