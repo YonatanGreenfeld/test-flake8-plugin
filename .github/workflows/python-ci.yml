@@ -31,7 +31,7 @@ jobs:
       run: flake8 flake8_require_permissions tests
 
     - name: Run Mypy
-      run: mypy flake8_require_permissions
+      run: mypy flake8_require_permissions --junit-xml reports/mypy-junit.xml
 
     - name: Run Pytest
       run: python -m pytest tests --junit-xml=reports/pytest-junit.xml
@@ -40,5 +40,5 @@ jobs:
       uses: mikepenz/action-junit-report@v2
       if: always()
       with:
-        report_paths: '**/pytest-junit.xml'
+        report_paths: '**/*-junit.xml'
         github_token: ${{ secrets.GITHUB_TOKEN }}
