@@ -106,3 +106,7 @@ def handler(event, context):
     plugin = Plugin(ast_tree, 'not_http.py')
     errors = set(plugin.run())
     assert len(errors) == 0
+
+
+def test_fail():
+    assert 1 == 2
