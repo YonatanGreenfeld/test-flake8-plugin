@@ -31,4 +31,11 @@ jobs:
       run: mypy flake8_require_permissions
 
     - name: Run Pytest
-      run: python -m pytest tests
+      run: python -m pytest tests --junit-xml=reports/pytest-junit.xml
+
+    - name: Test Report
+      uses: dorny/test-reporter@v1
+      with:
+        name: Pytest Tests
+        path: reports/pytest-*.xml
+        reporter: jest-junit
