@@ -38,4 +38,4 @@ jobs:
       with:
         name: Pytest Tests
         path: reports/pytest-*.xml
-        reporter: jest-junit
+        reporter: java-junit
